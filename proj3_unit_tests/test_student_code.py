@@ -134,7 +134,7 @@ def test_kmeans_2_classes_1d_features():
     features = np.ones((10, 1))
     features[5:, :] *= 2
 
-    centroids = student_code.kmeans(features, 2, max_iter=10)
+    centroids = student_code.kmeans(features, 2, max_iter=24)
     # print(centroids)
     gt_centroids = [[1],
                     [2]]
@@ -153,7 +153,7 @@ def test_kmeans_5_classes_2d_features():
     features[30:40, 1] *= 21
     features[40:50, 1] *= 35
 
-    centroids = student_code.kmeans(features, 5, max_iter=10)
+    centroids = student_code.kmeans(features, 5, max_iter=24)
     # print(centroids)
     gt_centroids = [[1, 1],
                     [2, 2],

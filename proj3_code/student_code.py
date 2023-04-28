@@ -252,7 +252,8 @@ def build_vocabulary(image_arrays, vocab_size, stride = 20):
 
         # 使用SIFTNet获取特征
         feats = get_siftnet_features(img_tensor, x, y)
-        feats = feats.numpy()
+        # feats = feats.numpy()
+        feats = feats
 
         # 添加到所有的SIFT特征中
         all_descriptors.append(feats)
@@ -261,12 +262,8 @@ def build_vocabulary(image_arrays, vocab_size, stride = 20):
     all_descriptors = np.vstack(all_descriptors)
 
     # 使用k-means聚类进行字典构建
-    kmeans = kmeans(n_clusters=vocab_size)
-    kmeans.fit(all_descriptors)
-
     # 获取聚类中心并返回
-    vocab = kmeans.cluster_centers_
-
+    vocab = kmeans(feature_vectors=all_descriptors,k=vocab_size)
     return vocab
 
 
@@ -340,54 +337,41 @@ def get_bags_of_sifts(image_arrays, vocabulary, step_size = 10):
             of clusters or equivalently the number of entries in each image's
             histogram (vocab_size) below.
     """
-    # 导入词汇表
     vocab = vocabulary
     vocab_size = len(vocab)
+    
+    # Calculate number of input images
     num_images = len(image_arrays)
+    
+    # Initiate feature matrix
     feats = np.zeros((num_images, vocab_size))
-
-    # 创建SIFT对象
-    sift = cv2.xfeatures2d.SIFT_create()
-
+    
+    # Loop through all input images
     for i in range(num_images):
-        # 将图像转换为float32类型的numpy数组
-        img = np.array(image_arrays[i], dtype='float32')
-
-        # 初始化特征描述符矩阵
-        descriptors = None
-
-        # 以步长为step_size收集SIFT特征描述符
-        for x in range(0, img.shape[1], step_size):
-            for y in range(0, img.shape[0], step_size):
-                # 在(x,y)位置上创建一个大小为1、角度为0的关键点
-                kp = cv2.KeyPoint(x, y, 1)
-
-                # 计算该关键点处的SIFT特征描述符
-                _, des = sift.compute(img, [kp])
-
-                # 如果还没有特征描述符矩阵，则进行初始化
-                if descriptors is None:
-                    descriptors = des
-                # 否则，将新的描述符垂直堆叠到已有数据矩阵中
-                else:
-                    descriptors = np.vstack((descriptors, des))
-
-        # 将SIFT描述符矩阵转换为Torch张量
-        descriptors = torch.from_numpy(descriptors).unsqueeze(0).unsqueeze(0)
-
-        # 获取该图像的SIFTNet特征
-        sift_feats = get_siftnet_features(descriptors, torch.Tensor([[(img.shape[0]-1)/2, (img.shape[1]-1)/2]]))
-
-        # 计算每个特征与每个聚类中心之间的距离
-        distances = pairwise_distances(sift_feats, vocab)
-
-        # 找到距离每个聚类中心最近的特征索引
-        nearest_word_indices = np.argmin(distances, axis=1)
-
-        # 创建每个视觉单词使用次数的直方图
-        histogram, _ = np.histogram(nearest_word_indices, bins=vocab_size, range=(0, vocab_size))
-
-        # 对直方图进行正则化，以适应不同图像大小的影响
-        feats[i] = histogram / histogram.sum()
-
+        # Convert image to torch tensor
+        img_tensor = torch.from_numpy(np.array(image_arrays[i], dtype='float32'))
+        
+        # Reshape image tensor to (1, 1, height, width) format for SIFTNet
+        img_tensor = img_tensor.reshape((1, 1, img_tensor.shape[0], img_tensor.shape[1]))
+        
+        # Define sampling positions on the image
+        x_coords = np.arange(0, img_tensor.shape[2], step_size)
+        y_coords = np.arange(0, img_tensor.shape[3], step_size)
+        xx, yy = np.meshgrid(x_coords, y_coords, indexing="ij")
+        xx_flattened = xx.flatten()
+        yy_flattened = yy.flatten()
+        
+        # Extract SIFT features using SIFTNet
+        siftnet_feats = get_siftnet_features(img_tensor, xx_flattened, yy_flattened)
+        
+        # Assign local features to nearest cluster center
+        distances = np.sqrt(((siftnet_feats - vocab[:, np.newaxis])**2).sum(axis=2))
+        nearest_clusters = np.argmin(distances, axis=0)
+        
+        # Build histogram indicating how many times each cluster was used
+        hist_counts = np.bincount(nearest_clusters, minlength=vocab_size)
+        
+        # Normalize the histogram
+        feats[i] = hist_counts / np.sum(hist_counts)
+    
     return feats

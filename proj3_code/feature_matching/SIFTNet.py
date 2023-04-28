@@ -514,6 +514,7 @@ def get_siftnet_features(img_bw: torch.Tensor, x: np.ndarray, y: np.ndarray) -> 
 
     for i, (x_center, y_center) in enumerate(zip(x,y)):
         x_subgrid, y_subgrid = get_sift_subgrid_coords(x_center, y_center)
+        # print(x_subgrid, y_subgrid)
         fvs[i,:] = histogram_grids_per_px[ y_subgrid, x_subgrid, :].flatten().numpy()
 
     # normalize feature vectors to unit length
