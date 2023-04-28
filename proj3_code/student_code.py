@@ -28,8 +28,24 @@ def pairwise_distances(X, Y):
     -   D: N x M numpy array where d(i, j) is the distance between row i of X and
         row j of Y
     """
-    # finish your code
-    pass 
+    n, d = X.shape
+    m, _ = Y.shape
+    
+    # 计算 X 和 Y 每一行的范数
+    X_norms_squared = np.sum(X ** 2, axis=1)
+    Y_norms_squared = np.sum(Y ** 2, axis=1)
+    
+    # 计算 Euclidean 距离的平方。注意：根据定义，距离越大，距离的平方就越大
+    # 因此最后需要将平方根应用于结果数组
+    xy_distances_squared = np.zeros((n, m))
+    for i in range(n):
+        for j in range(m):
+            xy_distances_squared[i, j] = X_norms_squared[i] + Y_norms_squared[j] - 2 * np.dot(X[i], Y[j])
+    
+    # 应用平方根
+    D = np.sqrt(xy_distances_squared)
+    
+    return D
 
 
 def get_tiny_images(image_arrays):
@@ -58,14 +74,21 @@ def get_tiny_images(image_arrays):
     -   feats: N x d numpy array of resized and then vectorized tiny images
                 e.g. if the images are resized to 16x16, d would be 256
     """
-    # For this part in order to pass the unit test, load the image in
-    # grayscale, resize it to 16x16, and return the Numpy array
-    feats = []
+    # 初始化输出数组
+    n = len(image_arrays)
+    feats = np.zeros((n, 16*16))
 
-    # TODO: Your implementation here! 
-
-    # This is a placeholder - replace this with your features!
-    return np.array(feats)
+    # 循环处理输入列表中的所有图像
+    for i, img in enumerate(image_arrays):
+        # 将图像调整为16x16像素数组，采用最近邻插值法进行调整（按规范要求）
+        tiny_img = cv2.resize(img, (16, 16), interpolation=cv2.INTER_NEAREST)
+        # 将微小图像展平并保存到输出数组中
+        feats[i] = tiny_img.flatten()
+        
+        # 将每个微小图像标准化为零均值和单位长度，
+        feats[i] = (feats[i] - np.mean(feats[i])) / np.std(feats[i])
+    
+    return feats
 
 
 def nearest_neighbor_classify(train_image_feats, train_labels,
@@ -99,11 +122,18 @@ def nearest_neighbor_classify(train_image_feats, train_labels,
             predicted category for each testing image
     """
     
-    test_labels = []
-    
-    # TODO: Your implementation here! 
+    # 在训练数据和测试数据之间计算距离矩阵
+    dists = pairwise_distances(test_image_feats, train_image_feats)
 
-    # This is a placeholder - replace this with your features!
+    test_labels = []
+
+    # 对于每个测试样本，计算其k个最近邻，并将它们的标签进行投票，选出最可能的标签作为预测结果
+    for i in range(dists.shape[0]):
+        top_k_idx = np.argsort(dists[i])[:k]
+        top_k_classes = [train_labels[idx] for idx in top_k_idx]
+        predicted_class = max(set(top_k_classes), key=top_k_classes.count)
+        test_labels.append(predicted_class)
+
     return test_labels
 
 
@@ -136,10 +166,21 @@ def kmeans(feature_vectors, k, max_iter = 10):
             array of shape (k, d)
     """
     N, d = feature_vectors.shape
-    centroids = np.zeros((k, d))
-    # TODO: Your implementation here! 
 
-    # This is a placeholder - replace this with your features!
+    # 随机初始化聚类中心
+    centroid_indices = np.random.choice(range(N), k, replace=False)
+    centroids = feature_vectors[centroid_indices]
+
+    for i in range(max_iter):
+        # 计算每个数据点与聚类中心之间的距离
+        distances = np.sqrt(((feature_vectors - centroids[:, np.newaxis])**2).sum(axis=2))
+
+        # 将每个数据点分配到最近的聚类
+        cluster_assignments = np.argmin(distances, axis=0)
+
+        # 更新聚类中心为聚类内所有数据点的平均值
+        for j in range(k):
+            centroids[j] = np.mean(feature_vectors[cluster_assignments == j], axis=0)
 
     return centroids
 
@@ -192,10 +233,39 @@ def build_vocabulary(image_arrays, vocab_size, stride = 20):
             / visual word.
     """
 
-    dim = 128  # length of the SIFT descriptors that you are going to compute.
-    vocab = np.zeros((vocab_size, dim))
-    # TODO: Your implementation here! 
-    # This is a placeholder - replace this with your features!
+    # 随机采样的特征数
+    max_samples = 1000
+
+    # 存储所有采样到的SIFT特征
+    all_descriptors = []
+
+    # 在所有图像中进行随机采样
+    for img in image_arrays:
+        h, w = img.shape
+        x, y = np.meshgrid(np.arange(10, w-10, stride), np.arange(10, h-10, stride))
+        x, y = x.flatten(), y.flatten()
+        idx = np.random.choice(len(x), min(max_samples, len(x)), replace=False)
+        x, y = x[idx], y[idx]
+
+        # 将灰度图像转换为PyTorch张量
+        img_tensor = torch.from_numpy(img.astype('float32')).unsqueeze(0).unsqueeze(0)
+
+        # 使用SIFTNet获取特征
+        feats = get_siftnet_features(img_tensor, x, y)
+        feats = feats.numpy()
+
+        # 添加到所有的SIFT特征中
+        all_descriptors.append(feats)
+
+    # 将所有SIFT特征拼接为单个矩阵
+    all_descriptors = np.vstack(all_descriptors)
+
+    # 使用k-means聚类进行字典构建
+    kmeans = kmeans(n_clusters=vocab_size)
+    kmeans.fit(all_descriptors)
+
+    # 获取聚类中心并返回
+    vocab = kmeans.cluster_centers_
 
     return vocab
 
@@ -221,10 +291,12 @@ def kmeans_quantize(raw_data_pts, centroids):
             a Numpy array of shape (N, )
 
     """
-    N, d = raw_data_pts.shape
-    indices = np.zeros(N)
-    # TODO: Your implementation here! 
-    # This is a placeholder - replace this with your features!
+     # 计算每个数据点与所有聚类中心之间的距离
+    distances = pairwise_distances(raw_data_pts, centroids)
+
+    # 找到距离每个数据点最近的聚类中心的索引
+    indices = np.argmin(distances, axis=1)
+
     return indices
 
 
@@ -268,11 +340,54 @@ def get_bags_of_sifts(image_arrays, vocabulary, step_size = 10):
             of clusters or equivalently the number of entries in each image's
             histogram (vocab_size) below.
     """
-    # load vocabulary
+    # 导入词汇表
     vocab = vocabulary
     vocab_size = len(vocab)
     num_images = len(image_arrays)
     feats = np.zeros((num_images, vocab_size))
-    # TODO: Your implementation here! 
-    # This is a placeholder - replace this with your features!
+
+    # 创建SIFT对象
+    sift = cv2.xfeatures2d.SIFT_create()
+
+    for i in range(num_images):
+        # 将图像转换为float32类型的numpy数组
+        img = np.array(image_arrays[i], dtype='float32')
+
+        # 初始化特征描述符矩阵
+        descriptors = None
+
+        # 以步长为step_size收集SIFT特征描述符
+        for x in range(0, img.shape[1], step_size):
+            for y in range(0, img.shape[0], step_size):
+                # 在(x,y)位置上创建一个大小为1、角度为0的关键点
+                kp = cv2.KeyPoint(x, y, 1)
+
+                # 计算该关键点处的SIFT特征描述符
+                _, des = sift.compute(img, [kp])
+
+                # 如果还没有特征描述符矩阵，则进行初始化
+                if descriptors is None:
+                    descriptors = des
+                # 否则，将新的描述符垂直堆叠到已有数据矩阵中
+                else:
+                    descriptors = np.vstack((descriptors, des))
+
+        # 将SIFT描述符矩阵转换为Torch张量
+        descriptors = torch.from_numpy(descriptors).unsqueeze(0).unsqueeze(0)
+
+        # 获取该图像的SIFTNet特征
+        sift_feats = get_siftnet_features(descriptors, torch.Tensor([[(img.shape[0]-1)/2, (img.shape[1]-1)/2]]))
+
+        # 计算每个特征与每个聚类中心之间的距离
+        distances = pairwise_distances(sift_feats, vocab)
+
+        # 找到距离每个聚类中心最近的特征索引
+        nearest_word_indices = np.argmin(distances, axis=1)
+
+        # 创建每个视觉单词使用次数的直方图
+        histogram, _ = np.histogram(nearest_word_indices, bins=vocab_size, range=(0, vocab_size))
+
+        # 对直方图进行正则化，以适应不同图像大小的影响
+        feats[i] = histogram / histogram.sum()
+
     return feats
